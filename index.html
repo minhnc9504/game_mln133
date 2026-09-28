@@ -8,23 +8,18 @@
 
   <!--
     ================================================================
-    HƯỚNG DẪN KẾT NỐI SUPABASE
+    KẾT NỐI SERVER
     ================================================================
-    1. Tạo một project Supabase.
-    2. Vào SQL Editor và chạy SQL ở cuối file này.
-    3. Thay SUPABASE_URL và SUPABASE_ANON_KEY bên dưới.
-    4. Deploy file này lên Netlify / Vercel / GitHub Pages.
-    5. Mọi người cùng mở đúng link đó.
+    File này được phục vụ bởi Node.js server (npm start) và tự kết nối
+    WebSocket tới chính server đó (ws:// khi http, wss:// khi https).
 
-    Lưu ý:
-    - Đây là ứng dụng frontend. Mật khẩu admin "congminh" được yêu cầu
-      theo đúng đề bài, nhưng nếu dùng cho hệ thống thật nên chuyển việc
-      xác thực admin sang Edge Function/Auth để không lộ mật khẩu.
-    - Khi chưa cấu hình Supabase, app vẫn chạy Demo Mode trên một trình duyệt.
+    Chỉ khi deploy frontend TÁCH RIÊNG khỏi server mới cần điền WS_URL,
+    ví dụ: "wss://mln133-server.onrender.com". Xem README.md.
     ================================================================
   -->
-
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    window.MLN133_CONFIG = { WS_URL: "" };
+  </script>
 
   <style>
     :root{
@@ -57,6 +52,7 @@
     }
     button,input,textarea{font:inherit}
     button{cursor:pointer}
+    button:disabled{opacity:.45;cursor:not-allowed;transform:none!important}
     .hidden{display:none!important}
     .app{width:min(1500px,100%);margin:auto;padding:18px}
     .topbar{
@@ -87,6 +83,8 @@
     }
     .dot{width:8px;height:8px;border-radius:50%;background:var(--red)}
     .dot.online{background:var(--green);box-shadow:0 0 12px var(--green)}
+    .dot.connecting{background:var(--gold);box-shadow:0 0 12px var(--gold);animation:blink 1s infinite alternate}
+    @keyframes blink{to{opacity:.35}}
 
     .screen{margin-top:18px}
     .panel{
@@ -136,6 +134,7 @@
       background:var(--surface2);border:1px solid var(--line);border-radius:12px;
       padding:13px;display:flex;align-items:center;gap:10px
     }
+    .player.offline{opacity:.55}
     .avatar{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:var(--surface3);font-weight:900;color:var(--gold2)}
     .player strong{font-size:13px;display:block}
     .player small{font-size:10px;color:var(--muted)}
@@ -168,18 +167,6 @@
     .question-number{font-size:11px;color:var(--gold2);font-weight:900;text-transform:uppercase;letter-spacing:1px}
     .question-text{font-size:clamp(20px,3vw,31px);font-weight:850;line-height:1.35;margin-top:10px}
     .question-source{font-size:12px;color:var(--muted);margin-top:12px}
-    .answers{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}
-    .answer{
-      padding:18px;border:2px solid var(--line);background:var(--surface2);border-radius:14px;
-      text-align:left;color:var(--text);display:flex;gap:12px;align-items:flex-start;transition:.18s
-    }
-    .answer:hover{border-color:rgba(245,158,11,.5)}
-    .answer.selected{border-color:var(--gold);background:rgba(245,158,11,.12)}
-    .answer.correct{border-color:var(--green);background:rgba(16,185,129,.12)}
-    .answer.wrong{border-color:var(--red);background:rgba(239,68,68,.12)}
-    .letter{width:32px;height:32px;border-radius:9px;background:#090c12;display:grid;place-items:center;font-weight:950;color:var(--gold2);flex:none}
-    .answer.selected .letter{background:var(--gold);color:#111}
-    .answer-text{font-size:14px;font-weight:700;line-height:1.45}
     .auction-panel{margin-top:16px;padding:18px;border:1px solid rgba(245,158,11,.28);border-radius:14px;background:rgba(245,158,11,.05)}
     .auction-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
     .auction-bids{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:9px;margin-top:12px}
@@ -262,7 +249,7 @@
     }
     @media(max-width:650px){
       .app{padding:10px}.topbar{position:static}.topbar,.meta{align-items:flex-start}
-      .role-grid,.answers{grid-template-columns:1fr}.landing-card{padding:25px 18px}
+      .role-grid,.player-options,.admin-options{grid-template-columns:1fr}.landing-card{padding:25px 18px}
       .game-side{display:flex}.question-card,.game-main,.lobby-main,.lobby-side{padding:17px}
       .question-text{font-size:21px}.stat-grid{grid-template-columns:1fr 1fr 1fr}
     }
@@ -280,7 +267,7 @@
       </div>
     </div>
     <div class="top-actions">
-      <div class="status"><span id="statusDot" class="dot"></span><span id="statusText">Demo Mode</span></div>
+      <div class="status"><span id="statusDot" class="dot connecting"></span><span id="statusText">Đang kết nối...</span></div>
       <button class="btn hidden" id="copyLinkBtn" onclick="copyRoomLink()">🔗 Chia sẻ link</button>
       <button class="btn hidden" id="logoutBtn" onclick="leaveGame()">Thoát</button>
     </div>
@@ -336,9 +323,9 @@
         <div class="section-title"><h2>🎮 Tham gia trò chơi</h2><span>NGƯỜI CHƠI</span></div>
         <div class="form">
           <label class="small">Tên người chơi</label>
-          <input id="playerName" class="input" maxlength="40" placeholder="Ví dụ: Nguyễn Văn A">
-          <label class="small">Mã phòng (nếu có)</label>
-          <input id="roomCodeInput" class="input" maxlength="8" placeholder="Ví dụ: MLN1336" style="text-transform:uppercase">
+          <input id="playerName" class="input" maxlength="40" placeholder="Ví dụ: Nguyễn Văn A" onkeydown="if(event.key==='Enter')joinAsPlayer()">
+          <label class="small">Mã phòng</label>
+          <input id="roomCodeInput" class="input" maxlength="8" placeholder="Ví dụ: ABC123" style="text-transform:uppercase" onkeydown="if(event.key==='Enter')joinAsPlayer()">
           <button class="btn green big" onclick="joinAsPlayer()">🎮 Tham gia</button>
           <button class="btn" onclick="backHome()">← Quay lại</button>
         </div>
@@ -375,7 +362,8 @@
             <strong>Phần I:</strong> Cơ sở lý luận về vấn đề dân tộc.<br>
             <strong>Phần II:</strong> Đặc điểm dân tộc và quan hệ dân tộc ở Việt Nam.<br>
             <strong>Phần III:</strong> Quan hệ dân tộc trong truyền thống đa văn hóa Việt Nam.<br>
-            <strong>Phần IV:</strong> Quan điểm, chính sách, thực trạng và giải pháp hiện nay.
+            <strong>Phần IV:</strong> Quan điểm, chính sách, thực trạng và giải pháp hiện nay.<br>
+            <strong>Tôn giáo:</strong> Quan điểm Mác – Lênin, tôn giáo ở Việt Nam và chính sách tôn giáo.
           </div>
           <div class="admin-actions">
             <button class="btn" onclick="openQuestionList()">📋 Xem toàn bộ câu hỏi</button>
@@ -405,7 +393,7 @@
         </div>
 
         <div class="panel admin-card full">
-          <div class="section-title"><h2>👥 Người chơi</h2><span>REALTIME</span></div>
+          <div class="section-title"><h2 id="adminPlayersTitle">👥 Người chơi: 0</h2><span id="adminOnlineLabel">REALTIME</span></div>
           <div id="adminPlayers" class="players"></div>
         </div>
 
@@ -439,8 +427,8 @@
             <strong>Chương 6 – Vấn đề dân tộc và tôn giáo trong thời kỳ quá độ lên CNXH</strong><br><br>
             Câu hỏi tập trung vào khái niệm dân tộc, hai xu hướng khách quan,
             Cương lĩnh dân tộc của chủ nghĩa Mác – Lênin, đặc điểm dân tộc Việt Nam,
-            đoàn kết dân tộc, thống nhất trong đa dạng, chính sách dân tộc và các vấn đề,
-            giải pháp hiện nay.
+            đoàn kết dân tộc, thống nhất trong đa dạng, chính sách dân tộc,
+            bản chất – nguồn gốc – tính chất của tôn giáo và chính sách tôn giáo ở Việt Nam.
           </div>
         </div>
       </div>
@@ -478,7 +466,7 @@
             <div class="game-actions" style="margin-top:12px">
               <div class="hint">Nhập số điểm muốn cược. Sau khi gửi, màn hình sẽ chuyển sang <b>Processing</b>.</div>
               <div style="display:flex;gap:8px;align-items:center">
-                <input id="playerBidInput" class="input" type="number" min="1" step="1" placeholder="Số điểm" style="width:140px">
+                <input id="playerBidInput" class="input" type="number" min="1" step="1" placeholder="Số điểm" style="width:140px" onkeydown="if(event.key==='Enter')submitPlayerBid()">
                 <button class="btn green big" id="submitBidBtn" onclick="submitPlayerBid()" disabled>🔨 Gửi cược</button>
               </div>
             </div>
@@ -531,7 +519,7 @@
           <p style="color:var(--muted);margin-top:8px">Cảm ơn mọi người đã tham gia Chương 6 MLN133.</p>
         </div>
         <div id="finalLeaderboard" class="rank-list" style="margin-top:24px"></div>
-        <button class="btn primary" style="width:100%;margin-top:20px" onclick="backHome()">🏠 Về trang chủ</button>
+        <button class="btn primary" id="endActionBtn" style="width:100%;margin-top:20px" onclick="endViewAction()">🏠 Về trang chủ</button>
       </div>
     </section>
   </main>
@@ -543,7 +531,7 @@
 <div id="questionModal" class="modal hidden">
   <div class="panel modal-card">
     <h2>📋 Danh sách câu hỏi</h2>
-    <p>Bộ câu hỏi được xây dựng trực tiếp từ nội dung Chương 6 bạn cung cấp.</p>
+    <p>Bộ câu hỏi được lưu trên server; chỉ Admin mới xem được đáp án.</p>
     <div id="modalQuestions" style="max-height:60vh;overflow:auto"></div>
     <button class="btn" style="width:100%;margin-top:14px" onclick="closeQuestionList()">Đóng</button>
   </div>
@@ -551,136 +539,44 @@
 
 <script>
 /* ================================================================
-   SUPABASE CONFIG
+   CONFIG
    ================================================================ */
-const SUPABASE_URL = "YOUR_SUPABASE_URL";
-const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
-
-const SUPABASE_READY =
-  SUPABASE_URL.startsWith("https://") &&
-  !SUPABASE_URL.includes("YOUR_") &&
-  SUPABASE_ANON_KEY.length > 30 &&
-  !SUPABASE_ANON_KEY.includes("YOUR_");
-
-let sb = null;
-if (SUPABASE_READY) {
-  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-}
-
-/* ================================================================
-   CÂU HỎI – BÁM THEO NỘI DUNG NGƯỜI DÙNG CUNG CẤP
-   ================================================================ */
-const QUESTIONS = [
-  {
-    id:1, section:"Phần I – Cơ sở lý luận về vấn đề dân tộc",
-    text:"Theo nội dung Chương 6, hai cách hiểu phổ biến của khái niệm “dân tộc” là gì?",
-    options:[
-      "Dân tộc – quốc gia và dân tộc – tộc người",
-      "Dân tộc – kinh tế và dân tộc – chính trị",
-      "Dân tộc – tôn giáo và dân tộc – giai cấp",
-      "Dân tộc – địa phương và dân tộc – vùng miền"
-    ], correct:0, explanation:"Nội dung Người 1 phân biệt dân tộc theo nghĩa quốc gia và theo nghĩa tộc người."
-  },
-  {
-    id:2, section:"Phần I – Cơ sở lý luận về vấn đề dân tộc",
-    text:"Yếu tố nào SAU ĐÂY không được nêu trong nội dung về cộng đồng tộc người?",
-    options:["Ngôn ngữ","Văn hóa","Ý thức tự giác tộc người","Mức thu nhập bình quân"], correct:3,
-    explanation:"Ba yếu tố được nêu là ngôn ngữ, văn hóa và ý thức tự giác tộc người."
-  },
-  {
-    id:3, section:"Phần I – Cơ sở lý luận về vấn đề dân tộc",
-    text:"Xu hướng khách quan thứ nhất của quan hệ dân tộc là gì?",
-    options:[
-      "Các cộng đồng dân cư muốn tách ra để hình thành cộng đồng dân tộc độc lập",
-      "Các dân tộc xóa bỏ mọi bản sắc riêng",
-      "Các dân tộc chỉ liên hiệp về kinh tế",
-      "Các dân tộc từ bỏ quyền tự quyết"
-    ], correct:0, explanation:"Người 2 trình bày hai xu hướng khách quan, trong đó xu hướng thứ nhất là tách ra hình thành cộng đồng dân tộc độc lập."
-  },
-  {
-    id:4, section:"Phần I – Cơ sở lý luận về vấn đề dân tộc",
-    text:"Xu hướng khách quan thứ hai của quan hệ dân tộc là gì?",
-    options:[
-      "Các dân tộc liên hiệp, xích lại gần nhau",
-      "Các dân tộc tách khỏi mọi quan hệ",
-      "Các dân tộc chỉ giao lưu văn hóa",
-      "Các dân tộc cạnh tranh để loại bỏ nhau"
-    ], correct:0, explanation:"Xu hướng thứ hai được nội dung cung cấp mô tả là các dân tộc liên hiệp, xích lại gần nhau."
-  },
-  {
-    id:5, section:"Phần I – Cơ sở lý luận về vấn đề dân tộc",
-    text:"Cương lĩnh dân tộc của chủ nghĩa Mác – Lênin gồm bao nhiêu nguyên tắc cơ bản?",
-    options:["2","3","4","5"], correct:1, explanation:"Ba nguyên tắc: bình đẳng, quyền tự quyết và liên hiệp công nhân tất cả các dân tộc."
-  },
-  {
-    id:6, section:"Phần I – Cơ sở lý luận về vấn đề dân tộc",
-    text:"Nguyên tắc nào sau đây thuộc Cương lĩnh dân tộc của chủ nghĩa Mác – Lênin?",
-    options:[
-      "Các dân tộc hoàn toàn bình đẳng",
-      "Dân tộc lớn có quyền cao hơn dân tộc nhỏ",
-      "Chỉ ưu tiên một dân tộc",
-      "Xóa bỏ mọi khác biệt văn hóa"
-    ], correct:0, explanation:"Bình đẳng hoàn toàn là một trong ba nguyên tắc được nêu."
-  },
-  {
-    id:7, section:"Phần I – Cơ sở lý luận về vấn đề dân tộc",
-    text:"Theo nội dung được cung cấp, quyền tự quyết của các dân tộc được hiểu như thế nào?",
-    options:[
-      "Đồng nghĩa với việc tùy tiện ly khai",
-      "Là một nguyên tắc trong Cương lĩnh dân tộc và không đồng nghĩa với tùy tiện ly khai",
-      "Chỉ áp dụng cho dân tộc lớn",
-      "Chỉ liên quan đến văn hóa"
-    ], correct:1, explanation:"Nội dung nhấn mạnh quyền tự quyết không đồng nghĩa với việc tùy tiện ly khai."
-  },
-  {
-    id:8, section:"Phần I – Cơ sở lý luận về vấn đề dân tộc",
-    text:"“Liên hiệp công nhân tất cả các dân tộc” thể hiện nguyên tắc nào trong Cương lĩnh dân tộc?",
-    options:["Đoàn kết giữa các dân tộc","Tách biệt các dân tộc","Phân biệt dân tộc","Ưu tiên dân tộc lớn"], correct:0,
-    explanation:"Đây là nguyên tắc thứ ba, nhấn mạnh sự đoàn kết giữa công nhân các dân tộc."
-  },
-  {
-    id:9, section:"Phần II – Đặc điểm dân tộc Việt Nam",
-    text:"Việt Nam được khái quát là quốc gia như thế nào về thành phần dân tộc?",
-    options:["Đơn dân tộc","Đa dân tộc","Không có dân tộc thiểu số","Chỉ có các cộng đồng tộc người"], correct:1,
-    explanation:"Người 4 nêu Việt Nam là quốc gia đa dân tộc."
-  },
-  {
-    id:10, section:"Phần II – Đặc điểm dân tộc Việt Nam",
-    text:"Theo nội dung được cung cấp, Việt Nam có bao nhiêu dân tộc?",
-    options:["52","53","54","55"], correct:2, explanation:"Nội dung Người 4 nêu Việt Nam có 54 dân tộc."
+function resolveWsUrl(){
+  const configured=(window.MLN133_CONFIG&&window.MLN133_CONFIG.WS_URL||"").trim();
+  if(configured) return configured;
+  if(location.protocol==="http:"||location.protocol==="https:"){
+    return (location.protocol==="https:"?"wss://":"ws://")+location.host;
   }
-];
+  return "ws://localhost:3000";
+}
+const WS_URL=resolveWsUrl();
+
+const STORAGE={
+  adminToken:"mln133_admin_token",
+  adminRoom:"mln133_admin_room",
+  playerId:"mln133_player_id",
+  playerToken:"mln133_player_token",
+  playerRoom:"mln133_player_room",
+  playerName:"mln133_player_name",
+  playerSession:"mln133_player_session"
+};
+const LETTERS="ABCDEF";
 
 /* ================================================================
-   STATE
+   STATE (chỉ để hiển thị – server là nguồn sự thật duy nhất)
    ================================================================ */
 const state = {
   role:null,
   roomCode:null,
   playerId:null,
   playerName:null,
-  isAdmin:false,
-  players:[],
-  currentQuestion:0,
-  gameStatus:"waiting",
-  answers:{},
-  auctionOpen:false,
-  auctionEnd:null,
-  winningPlayerId:null,
-  winningBid:0,
+  view:null,
+  clockOffset:0,
+  roundId:null,
   selectedAdminAnswer:null,
-  resultPublished:false,
-  questionOpen:false,
-  answerEnd:null,
   playerSelectedAnswer:null,
-  jackpot:0,
-  jackpotWinnerId:null,
-  jackpotAwarded:false,
-  jackpotAwardAmount:0,
-  channel:null,
-  timer:null,
-  timerEnd:null,
-  demoPlayers:[]
+  adminOnDashboard:false,
+  hasConnectedOnce:false
 };
 
 const $ = id => document.getElementById(id);
@@ -695,378 +591,430 @@ function toast(message,type=""){
   $("toastWrap").appendChild(el);
   setTimeout(()=>el.remove(),3200);
 }
-function setStatus(online){
-  $("statusDot").classList.toggle("online",online);
-  $("statusText").textContent=online ? "Realtime Online" : "Demo Mode";
-}
-function randomCode(){
-  return "MLN" + Math.random().toString(36).slice(2,7).toUpperCase();
-}
-function randomId(){
-  return crypto.randomUUID ? crypto.randomUUID() : Date.now()+"-"+Math.random().toString(36).slice(2);
+function setStatus(status){
+  const map={
+    online:["dot online","Đã kết nối"],
+    connecting:["dot connecting","Đang kết nối..."],
+    reconnecting:["dot connecting","Đang kết nối lại..."],
+    offline:["dot","Mất kết nối"]
+  };
+  const [cls,text]=map[status]||map.offline;
+  $("statusDot").className=cls;
+  $("statusText").textContent=text;
 }
 function escapeHtml(s){
   return String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
+}
+function secondsLeft(ts){
+  if(!ts) return 0;
+  return Math.max(0,Math.ceil((ts-(Date.now()+state.clockOffset))/1000));
+}
+
+/* ================================================================
+   STORAGE
+   ================================================================ */
+function storageGet(store,key){ try{ return store.getItem(key); }catch{ return null; } }
+function storageSet(store,key,value){
+  try{ value===null||value===undefined ? store.removeItem(key) : store.setItem(key,value); }catch{}
+}
+function savePlayerIdentity({roomCode,playerId,playerToken,name}){
+  storageSet(sessionStorage,STORAGE.playerSession,JSON.stringify({roomCode,playerId,playerToken,name}));
+  storageSet(localStorage,STORAGE.playerId,playerId);
+  storageSet(localStorage,STORAGE.playerToken,playerToken);
+  storageSet(localStorage,STORAGE.playerRoom,roomCode);
+  storageSet(localStorage,STORAGE.playerName,name);
+}
+function sessionPlayer(){
+  try{ return JSON.parse(storageGet(sessionStorage,STORAGE.playerSession)||"null"); }catch{ return null; }
+}
+function localPlayer(){
+  const playerId=storageGet(localStorage,STORAGE.playerId);
+  const playerToken=storageGet(localStorage,STORAGE.playerToken);
+  const roomCode=storageGet(localStorage,STORAGE.playerRoom);
+  return playerId&&playerToken&&roomCode ? {playerId,playerToken,roomCode,name:storageGet(localStorage,STORAGE.playerName)} : null;
+}
+function clearPlayerIdentity(){
+  storageSet(sessionStorage,STORAGE.playerSession,null);
+  storageSet(localStorage,STORAGE.playerId,null);
+  storageSet(localStorage,STORAGE.playerToken,null);
+  storageSet(localStorage,STORAGE.playerRoom,null);
+}
+function clearAdminSession(){
+  storageSet(localStorage,STORAGE.adminToken,null);
+  storageSet(localStorage,STORAGE.adminRoom,null);
+}
+
+/* ================================================================
+   WEBSOCKET
+   ================================================================ */
+let socket=null;
+let reconnectAttempts=0;
+let reconnectTimer=null;
+
+function connectWebSocket(){
+  clearTimeout(reconnectTimer);
+  if(socket && (socket.readyState===WebSocket.OPEN || socket.readyState===WebSocket.CONNECTING)) return;
+  setStatus(state.hasConnectedOnce?"reconnecting":"connecting");
+  let ws;
+  try{
+    ws=new WebSocket(WS_URL);
+  }catch(e){
+    console.error(e);
+    handleReconnect();
+    return;
+  }
+  socket=ws;
+  ws.onopen=()=>{
+    const wasReconnect=state.hasConnectedOnce;
+    reconnectAttempts=0;
+    state.hasConnectedOnce=true;
+    setStatus("online");
+    if(wasReconnect) toast("Đã kết nối","success");
+    restoreSession();
+  };
+  ws.onmessage=event=>{
+    let msg;
+    try{ msg=JSON.parse(event.data); }catch{ return; }
+    handleMessage(msg);
+  };
+  ws.onclose=()=>{
+    if(socket!==ws) return;
+    socket=null;
+    handleReconnect();
+  };
+}
+
+function handleReconnect(){
+  clearTimeout(reconnectTimer);
+  reconnectAttempts++;
+  setStatus(reconnectAttempts>6?"offline":"reconnecting");
+  const delay=Math.min(10000,500*Math.pow(2,Math.min(reconnectAttempts-1,5)));
+  reconnectTimer=setTimeout(connectWebSocket,delay);
+}
+
+function reconnectNow(){
+  if(!socket){ reconnectAttempts=0; connectWebSocket(); }
+}
+window.addEventListener("online",reconnectNow);
+document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") reconnectNow(); });
+
+function sendMessage(type,payload={}){
+  if(!socket || socket.readyState!==WebSocket.OPEN){
+    toast("Đang kết nối lại tới máy chủ, vui lòng thử lại sau giây lát.","error");
+    return false;
+  }
+  const msg={type,...payload};
+  if(state.roomCode && msg.roomCode===undefined && (type.startsWith("admin_")||type.startsWith("player_"))) msg.roomCode=state.roomCode;
+  if(state.role==="player" && state.playerId && msg.playerId===undefined && type.startsWith("player_")) msg.playerId=state.playerId;
+  socket.send(JSON.stringify(msg));
+  return true;
+}
+
+function urlRoom(){
+  return (new URLSearchParams(location.search).get("room")||"").trim().toUpperCase();
+}
+
+function restoreSession(){
+  const adminToken=storageGet(localStorage,STORAGE.adminToken);
+  const adminRoom=storageGet(localStorage,STORAGE.adminRoom);
+  if(adminToken && adminRoom && (state.role==="admin" || (!state.role && !urlRoom()))){
+    sendMessage("admin_resume",{adminToken,roomCode:adminRoom});
+    return;
+  }
+  if(state.role==="admin") return;
+  const s=sessionPlayer();
+  if(s && (!urlRoom() || urlRoom()===s.roomCode || state.role==="player")){
+    sendMessage("reconnect",{roomCode:s.roomCode,playerId:s.playerId,playerToken:s.playerToken,takeover:true});
+    return;
+  }
+  const l=localPlayer();
+  if(l && !state.role && (!urlRoom() || urlRoom()===l.roomCode)){
+    sendMessage("reconnect",{roomCode:l.roomCode,playerId:l.playerId,playerToken:l.playerToken,takeover:false});
+  }
+}
+
+function handleMessage(msg){
+  switch(msg.type){
+    case "hello":
+    case "pong":
+      if(msg.serverNow) state.clockOffset=msg.serverNow-Date.now();
+      break;
+    case "admin_session":
+      storageSet(localStorage,STORAGE.adminToken,msg.adminToken);
+      sendMessage("create_room",{adminToken:msg.adminToken});
+      break;
+    case "room_created":
+      enterAdmin(msg.roomCode,false);
+      break;
+    case "admin_resumed":
+      enterAdmin(msg.roomCode,true);
+      break;
+    case "joined":
+      enterPlayer(msg);
+      break;
+    case "room_state":
+      applyRoomState(msg.state);
+      break;
+    case "players_updated":
+      onPlayersUpdated(msg);
+      break;
+    case "game_started":
+      toast(state.role==="admin"?"Game đã bắt đầu! Admin hãy mở phiên đấu giá.":"🎮 Game đã bắt đầu!","success");
+      break;
+    case "auction_started":
+      toast(state.role==="admin"?"Đã mở đấu giá trong 30 giây.":"🔨 Phiên đấu giá đã mở! Hãy nhập mức cược.","success");
+      break;
+    case "auction_updated":
+      break;
+    case "auction_finished":
+      if(msg.winner) toast(`🏆 ${msg.winner.name} thắng đấu giá với ${msg.winner.bid} điểm!`,"success");
+      else toast(state.role==="admin"?"Hết giờ nhưng không có ai cược. Có thể mở lại đấu giá hoặc sang câu tiếp.":"Không có ai cược ở câu này.","error");
+      break;
+    case "question_opened":
+      if(state.role==="admin") toast(`📖 Đã mở câu hỏi. ${msg.winner.name} có 30 giây để trả lời.`,"success");
+      else if(msg.winner.playerId===state.playerId) toast("📖 Câu hỏi đã mở! Bạn có 30 giây.","success");
+      break;
+    case "answer_submitted":
+      toast(`📩 ${msg.name} đã gửi đáp án ${LETTERS[msg.answer]||"?"}.`);
+      break;
+    case "answer_result":
+      if(msg.correct) toast(`✅ ${msg.name} trả lời đúng: +${msg.delta} điểm.`,"success");
+      else toast(`${msg.timedOut?"⏰ Hết giờ!":"❌"} ${msg.name} trả lời sai: ${msg.delta} điểm. +${-msg.delta} vào Jackpot.`,"error");
+      break;
+    case "jackpot_result":
+      if(msg.playerId===state.playerId) toast(`🎰 JACKPOT! Bạn nhận +${msg.amount} điểm!`,"success");
+      else toast(`🎰 JACKPOT! Chúc mừng ${msg.name} nhận ${msg.amount} điểm!`,"success");
+      break;
+    case "score_updated":
+    case "jackpot_updated":
+    case "ack":
+      break;
+    case "question_changed":
+      toast(`➡ Chuyển sang câu ${msg.questionNumber}/${msg.totalQuestions}.`);
+      break;
+    case "round_cancelled":
+      toast(msg.message,"error");
+      break;
+    case "game_ended":
+      toast("Game đã kết thúc.","success");
+      break;
+    case "room_reset":
+      toast("Đã reset phòng.");
+      break;
+    case "questions_list":
+      renderQuestionList(msg.questions||[]);
+      break;
+    case "left":
+      leaveLocal();
+      break;
+    case "error":
+      handleServerError(msg);
+      break;
+    default:
+      console.warn("Unknown message",msg);
+  }
+}
+
+function handleServerError(msg){
+  const {code,command,message}=msg;
+  if(command==="admin_resume"){
+    clearAdminSession();
+    if(state.role==="admin"){
+      resetLocalState();
+      toast(message,"error");
+      showOnly("adminLogin");
+    }
+    return;
+  }
+  if(command==="reconnect"){
+    const wasPlayer=state.role==="player";
+    if(code!=="PLAYER_IN_USE") clearPlayerIdentity();
+    if(wasPlayer){
+      resetLocalState();
+      toast(message,"error");
+      showPlayerJoin();
+    }
+    return;
+  }
+  if((code==="ADMIN_SESSION_EXPIRED"||code==="ADMIN_NOT_AUTHENTICATED") && command!=="create_room"){
+    clearAdminSession();
+    resetLocalState();
+    toast(message,"error");
+    showOnly("adminLogin");
+    return;
+  }
+  if(code==="PLAYER_NOT_FOUND" && state.role==="player"){
+    clearPlayerIdentity();
+    resetLocalState();
+    toast(message,"error");
+    showPlayerJoin();
+    return;
+  }
+  toast(message||"Có lỗi xảy ra.","error");
+  renderAll();
 }
 
 /* ================================================================
    NAVIGATION
    ================================================================ */
-function backHome(){
-  state.role=null; state.isAdmin=false;
+function resetLocalState(){
+  state.role=null;state.roomCode=null;state.playerId=null;state.playerName=null;state.view=null;
+  state.roundId=null;state.selectedAdminAnswer=null;state.playerSelectedAnswer=null;state.adminOnDashboard=false;
   $("logoutBtn").classList.add("hidden");
   $("copyLinkBtn").classList.add("hidden");
-  showOnly("landing");
+  $("adminQuestionsCard").classList.add("hidden");
+  closeQuestionList();
+}
+function backHome(){
+  if(!state.role) showOnly("landing");
 }
 function showAdminLogin(){showOnly("adminLogin");$("adminPass").focus()}
-function showPlayerJoin(){showOnly("playerJoin");$("playerName").focus()}
+function showPlayerJoin(){
+  showOnly("playerJoin");
+  const savedName=storageGet(localStorage,STORAGE.playerName);
+  if(savedName && !$("playerName").value) $("playerName").value=savedName;
+  if(urlRoom() && !$("roomCodeInput").value) $("roomCodeInput").value=urlRoom();
+  $("playerName").focus();
+}
 function leaveGame(){
-  if(state.channel && sb){ sb.removeChannel(state.channel); state.channel=null; }
-  state.role=null;state.isAdmin=false;state.roomCode=null;state.playerId=null;
-  $("logoutBtn").classList.add("hidden");$("copyLinkBtn").classList.add("hidden");
+  if(state.role==="player"){
+    if(!sendMessage("player_leave")) leaveLocal();
+    return;
+  }
+  if(state.role==="admin"){
+    if(!confirm("Thoát bảng điều khiển? Phòng vẫn tồn tại trên server nhưng bạn sẽ cần đăng nhập lại và tạo phòng mới."))return;
+    sendMessage("admin_leave");
+    clearAdminSession();
+  }
+  leaveLocal();
+}
+function leaveLocal(){
+  if(state.role==="player") clearPlayerIdentity();
+  resetLocalState();
   showOnly("landing");
+}
+function endViewAction(){
+  if(state.role==="admin"){ state.adminOnDashboard=true; showOnly("adminView"); renderAdmin(); return; }
+  if(state.role==="player"){ leaveGame(); return; }
+  showOnly("landing");
+}
+
+function enterAdmin(roomCode,resumed){
+  state.role="admin";state.roomCode=roomCode;state.playerId=null;state.playerName=null;
+  storageSet(localStorage,STORAGE.adminRoom,roomCode);
+  $("adminPass").value="";
+  $("logoutBtn").classList.remove("hidden");
+  $("copyLinkBtn").classList.remove("hidden");
+  showOnly("adminView");
+  if(resumed) toast("Đã kết nối lại phòng "+roomCode,"success");
+}
+function enterPlayer(msg){
+  state.role="player";state.roomCode=msg.roomCode;state.playerId=msg.playerId;state.playerName=msg.name;
+  savePlayerIdentity({roomCode:msg.roomCode,playerId:msg.playerId,playerToken:msg.playerToken,name:msg.name});
+  $("logoutBtn").classList.remove("hidden");
+  $("copyLinkBtn").classList.remove("hidden");
+  if(msg.reconnected) toast("Đã kết nối lại phòng "+msg.roomCode,"success");
 }
 
 /* ================================================================
    ADMIN
    ================================================================ */
-async function loginAdmin(){
+function loginAdmin(){
   const pass=$("adminPass").value;
-  if(pass!=="congminh"){
-    toast("Sai mật khẩu Admin.","error");return;
-  }
-  state.role="admin";state.isAdmin=true;state.roomCode=randomCode();
-  state.currentQuestion=0;state.gameStatus="waiting";
-  state.players=[];
-  state.auctionOpen=false; state.winningPlayerId=null; state.winningBid=0; state.selectedAdminAnswer=null; state.resultPublished=false; state.questionOpen=false; state.answerEnd=null; state.playerSelectedAnswer=null; state.jackpot=0; state.jackpotWinnerId=null; state.jackpotAwarded=false; state.jackpotAwardAmount=0;
-  $("logoutBtn").classList.remove("hidden");
-  $("copyLinkBtn").classList.remove("hidden");
-
-  if(SUPABASE_READY){
-    try{
-      const {error}=await sb.from("mln133_rooms").insert({
-        code:state.roomCode,status:"waiting",current_question:0,question_count:QUESTIONS.length,jackpot:0,question_open:false,answer_end:null,jackpot_winner_id:null,jackpot_awarded:false
-      });
-      if(error) throw error;
-      await subscribeRoom();
-      setStatus(true);
-    }catch(e){
-      console.error(e);toast("Không tạo được phòng Supabase. Chuyển Demo Mode.","error");
-      setStatus(false);
-    }
-  }else{
-    setStatus(false);
-  }
-  renderAdmin();
-  showOnly("adminView");
+  if(!pass){toast("Vui lòng nhập mật khẩu Admin.","error");return}
+  sendMessage("admin_login",{password:pass});
 }
-
-async function adminStartGame(){
-  if(!state.roomCode)return;
-  state.gameStatus="playing";state.currentQuestion=0;
-  resetQuestionRound();
-  await updateRoom({status:"playing",current_question:0,phase:"auction",auction_open:false,auction_end:null,winning_player_id:null,winning_bid:0,selected_answer:null,result_published:false,question_open:false,answer_end:null,jackpot:state.jackpot,jackpot_winner_id:null,jackpot_awarded:false});
-  renderAll();
-  toast("Game đã bắt đầu! Admin hãy mở phiên đấu giá.","success");
+function adminStartGame(){ sendMessage("admin_start_game"); }
+function adminOpenAuction(){ sendMessage("admin_open_auction"); }
+function adminFinalizeAuction(){ sendMessage("admin_finalize_auction"); }
+function adminOpenQuestion(){ sendMessage("admin_open_question"); }
+function adminSubmitAnswer(){ sendMessage("admin_submit_answer",{answer:state.selectedAdminAnswer}); }
+function spinJackpot(){ sendMessage("admin_spin_jackpot"); }
+function adminNextQuestion(){ sendMessage("admin_next_question"); }
+function adminEndGame(){
+  if(!confirm("Kết thúc game ngay bây giờ?"))return;
+  sendMessage("admin_end_game");
 }
-
-function resetQuestionRound(){
-  state.auctionOpen=false;state.auctionEnd=null;state.winningPlayerId=null;state.winningBid=0;state.selectedAdminAnswer=null;state.resultPublished=false;state.questionOpen=false;state.answerEnd=null;state.playerSelectedAnswer=null;
-  state.players.forEach(p=>{p.answered=false;p.bid=0;p.selected_answer=null});
+function resetRoom(){
+  if(!confirm("Reset phòng và toàn bộ điểm số?"))return;
+  state.adminOnDashboard=false;
+  sendMessage("admin_reset_room");
 }
-
-async function adminOpenAuction(){
-  if(state.gameStatus!=="playing")return;
-  resetQuestionRound();
-  state.auctionOpen=true;
-  state.auctionEnd=Date.now()+30000;
-  state.players.forEach(p=>p.bid=0);
-  await updateRoom({phase:"auction",auction_open:true,auction_end:new Date(state.auctionEnd).toISOString(),winning_player_id:null,winning_bid:0,selected_answer:null,result_published:false,question_open:false,answer_end:null});
-  renderAll();
-  toast("Đã mở đấu giá trong 30 giây.");
-  startAuctionTimer();
-}
-
-function startAuctionTimer(){
-  clearInterval(state.timer);
-  const tick=()=>{
-    const left=Math.max(0,Math.ceil((state.auctionEnd-Date.now())/1000));
-    $("adminAuctionStatus").textContent=state.auctionOpen?`CÒN ${left}s`:(state.winningPlayerId?"ĐÃ CHỐT":"CHƯA MỞ");
-    if(left<=0 && state.auctionOpen){ clearInterval(state.timer); adminFinalizeAuction(); }
-  };
-  tick();state.timer=setInterval(tick,250);
-}
-
-async function adminFinalizeAuction(){
-  if(!state.auctionOpen && state.winningPlayerId)return;
-  state.auctionOpen=false;clearInterval(state.timer);
-  const candidates=state.players.filter(p=>Number(p.bid)>0).sort((a,b)=>Number(b.bid)-Number(a.bid));
-  const winner=candidates[0];
-  if(!winner){ toast("Chưa có người chơi nào gửi cược.","error"); return; }
-  state.winningPlayerId=winner.id;state.winningBid=Number(winner.bid);
-  state.players.forEach(p=>{p.answered=false});
-  await updateRoom({phase:"winner",auction_open:false,auction_end:null,winning_player_id:winner.id,winning_bid:state.winningBid,selected_answer:null,result_published:false,question_open:false,answer_end:null});
-  renderAll();
-  toast(`🏆 ${winner.name} thắng đấu giá với ${state.winningBid} điểm!`,"success");
-}
-
 function adminSelectAnswer(index){
-  if(!state.winningPlayerId || state.resultPublished)return;
+  const v=state.view; if(!v) return;
+  const g=v.game;
+  const winner=v.players.find(p=>p.id===g.winningPlayerId);
+  if(g.phase!=="question" || !winner || winner.answered) return;
   state.selectedAdminAnswer=index;
   document.querySelectorAll(".admin-option").forEach((el,i)=>el.classList.toggle("selected",i===index));
-}
-
-async function adminOpenQuestion(){
-  if(!state.winningPlayerId){toast("Hãy chốt người thắng đấu giá trước.","error");return}
-  if(state.questionOpen || state.resultPublished)return;
-  state.questionOpen=true;
-  state.answerEnd=Date.now()+30000;
-  await updateRoom({phase:"question",question_open:true,answer_end:new Date(state.answerEnd).toISOString(),result_published:false,selected_answer:null});
-  renderAll();
-  toast(`📖 Đã mở câu hỏi. ${state.players.find(p=>p.id===state.winningPlayerId)?.name||"Người thắng"} có 30 giây để trả lời.`,"success");
-  startAnswerTimer();
-}
-
-function startAnswerTimer(){
-  clearInterval(state.timer);
-  const tick=()=>{
-    const left=Math.max(0,Math.ceil((state.answerEnd-Date.now())/1000));
-    const adminTimer=document.getElementById("adminAnswerStatus");
-    if(adminTimer)adminTimer.textContent=state.questionOpen?`TRẢ LỜI: ${left}s`:state.resultPublished?"ĐÃ CHẤM":"CHƯA MỞ";
-    const playerTimer=document.getElementById("playerAnswerTimer");
-    if(playerTimer)playerTimer.textContent=`${left}s`;
-    if(left<=0 && state.questionOpen){ clearInterval(state.timer); autoCloseAnswer(); }
-  };
-  tick();state.timer=setInterval(tick,250);
-}
-
-async function autoCloseAnswer(){
-  if(!state.questionOpen || state.resultPublished)return;
-  const winner=state.players.find(p=>p.id===state.winningPlayerId);
-  if(!winner)return;
-  state.questionOpen=false;
-  state.selectedAdminAnswer=winner.selected_answer===null||winner.selected_answer===undefined?null:Number(winner.selected_answer);
-  await adminSubmitAnswer(true);
-}
-
-async function submitPlayerAnswer(){
-  if(!state.questionOpen || state.winningPlayerId!==state.playerId)return;
-  if(state.playerSelectedAnswer===null){toast("Hãy chọn một đáp án.","error");return}
-  const me=state.players.find(p=>p.id===state.playerId);
-  if(!me)return;
-  me.selected_answer=state.playerSelectedAnswer;
-  me.answered=true;
-  if(SUPABASE_READY){
-    await sb.from("mln133_players").update({selected_answer:state.playerSelectedAnswer,answered:true}).eq("id",me.id);
-  }
-  $("submitAnswerBtn").disabled=true;
-  $("playerAnswerBox").classList.add("hidden");
-  $("playerProcessing").classList.remove("hidden");
-  $("processingText").textContent="Đã gửi đáp án. Đang chờ Admin chấm...";
-  renderAll();
-}
-
-async function adminSubmitAnswer(auto=false){
-  if(!state.winningPlayerId){toast("Hãy chốt người thắng đấu giá trước.","error");return}
-  const q=QUESTIONS[state.currentQuestion];
-  const winner=state.players.find(p=>p.id===state.winningPlayerId);
-  if(!winner)return;
-  const submitted=winner.selected_answer===null||winner.selected_answer===undefined?null:Number(winner.selected_answer);
-  const answer=auto?submitted:(submitted!==null?submitted:state.selectedAdminAnswer);
-  if(answer===null || answer===undefined){
-    if(!auto){toast("Người thắng chưa gửi đáp án.","error");return}
-  }
-  const correct=answer===q.correct;
-  const before=Number(winner.score||0);
-  const stake=Number(state.winningBid||0);
-  let addedJackpot=0;
-  if(correct){
-    winner.score=before+stake;
-  }else{
-    winner.score=Math.max(0,before-stake);
-    addedJackpot=stake;
-    state.jackpot=Number(state.jackpot||0)+addedJackpot;
-  }
-  winner.answered=true;
-  state.selectedAdminAnswer=answer===null?null:answer;
-  state.questionOpen=false;
-  state.resultPublished=true;
-  await updateRoom({phase:"result",question_open:false,answer_end:null,selected_answer:state.selectedAdminAnswer,result_published:true,jackpot:state.jackpot});
-  if(SUPABASE_READY){
-    await sb.from("mln133_players").update({score:winner.score,answered:true,selected_answer:state.selectedAdminAnswer}).eq("id",winner.id);
-  }
-  renderAll();
-  toast(correct?`✅ ${winner.name} trả lời đúng: +${stake} điểm.`:`❌ ${winner.name} trả lời sai: -${stake} điểm. +${stake} vào Jackpot.`,correct?"success":"error");
-}
-
-async function spinJackpot(){
-  if(state.jackpotAwarded){toast("Jackpot này đã được quay.","error");return}
-  if(Number(state.jackpot||0)<=0){toast("Jackpot hiện đang bằng 0.","error");return}
-  const eligible=state.players.filter(p=>p);
-  if(!eligible.length){toast("Chưa có người chơi để quay Jackpot.","error");return}
-  const winner=eligible[Math.floor(Math.random()*eligible.length)];
-  const amount=Number(state.jackpot||0);
-  winner.score=Number(winner.score||0)+amount;
-  state.jackpotWinnerId=winner.id;
-  state.jackpotAwarded=true;
-  state.jackpotAwardAmount=amount;
-  const oldJackpot=amount;
-  state.jackpot=0;
-  await updateRoom({phase:"jackpot",jackpot:0,jackpot_winner_id:winner.id,jackpot_awarded:true,result_published:true});
-  if(SUPABASE_READY){await sb.from("mln133_players").update({score:winner.score}).eq("id",winner.id)}
-  renderAll();
-  toast(`🎰 JACKPOT! Chúc mừng ${winner.name} nhận ${oldJackpot} điểm!`,"success");
-}
-
-async function adminNextQuestion(){
-  if(state.currentQuestion>=QUESTIONS.length-1){
-    if((state.currentQuestion+1)%10===0 && !state.jackpotAwarded && Number(state.jackpot||0)>0){toast("Hãy quay Jackpot trước khi kết thúc game.","error");return}
-    await adminEndGame(); return;
-  }
-  if((state.currentQuestion+1)%10===0 && !state.jackpotAwarded){
-    toast("Hãy quay Jackpot sau khi hoàn thành 10 câu.","error");return;
-  }
-  state.currentQuestion++;
-  state.jackpotAwarded=false;state.jackpotWinnerId=null;state.jackpotAwardAmount=0;
-  resetQuestionRound();
-  await updateRoom({current_question:state.currentQuestion,status:"playing",phase:"auction",auction_open:false,auction_end:null,winning_player_id:null,winning_bid:0,selected_answer:null,result_published:false,question_open:false,answer_end:null,jackpot:state.jackpot,jackpot_winner_id:null,jackpot_awarded:false});
-  renderAll();
-}
-
-async function adminEndGame(){
-  state.gameStatus="ended";clearInterval(state.timer);
-  await updateRoom({status:"ended",phase:"ended",auction_open:false,question_open:false,answer_end:null,result_published:false,jackpot:state.jackpot});
-  renderAll();
-  showOnly("endView");
-  renderFinalLeaderboard();
-  toast("Game đã kết thúc.","success");
-}
-async function resetRoom(){
-  if(!confirm("Reset phòng và toàn bộ điểm số?"))return;
-  state.currentQuestion=0;state.gameStatus="waiting";state.jackpot=0;state.jackpotAwardAmount=0;resetQuestionRound();
-  state.players.forEach(p=>{p.score=100;p.answered=false;p.bid=0;p.selected_answer=null});
-  await updateRoom({status:"waiting",current_question:0,phase:"waiting",auction_open:false,winning_player_id:null,winning_bid:0,selected_answer:null,result_published:false,auction_end:null,question_open:false,answer_end:null,jackpot:0,jackpot_winner_id:null,jackpot_awarded:false});
-  await persistPlayers();
-  renderAll();toast("Đã reset phòng.");
 }
 
 /* ================================================================
    PLAYER
    ================================================================ */
-async function joinAsPlayer(){
+function joinAsPlayer(){
   const name=$("playerName").value.trim();
   const code=$("roomCodeInput").value.trim().toUpperCase();
-  if(name.length<2){toast("Vui lòng nhập tên người chơi.","error");return}
+  if(name.length<2){toast("Vui lòng nhập tên người chơi (ít nhất 2 ký tự).","error");return}
   if(!code){toast("Vui lòng nhập mã phòng.","error");return}
-
-  state.role="player";state.isAdmin=false;state.playerName=name;state.playerId=randomId();state.roomCode=code;
-  $("logoutBtn").classList.remove("hidden");
-
-  if(SUPABASE_READY){
-    try{
-      const {data:room,error}=await sb.from("mln133_rooms").select("*").eq("code",code).maybeSingle();
-      if(error||!room){throw new Error("Không tìm thấy phòng");}
-      if(room.status==="ended"){toast("Phòng đã kết thúc.","error");return}
-      state.currentQuestion=room.current_question||0;
-      state.gameStatus=room.status;
-      state.auctionOpen=!!room.auction_open; state.auctionEnd=room.auction_end?new Date(room.auction_end).getTime():null;
-      state.winningPlayerId=room.winning_player_id||null; state.winningBid=room.winning_bid||0;
-      state.selectedAdminAnswer=room.selected_answer===null?null:room.selected_answer; state.resultPublished=!!room.result_published; state.questionOpen=!!room.question_open; state.answerEnd=room.answer_end?new Date(room.answer_end).getTime():null; state.jackpot=Number(room.jackpot||0); state.jackpotWinnerId=room.jackpot_winner_id||null; state.jackpotAwarded=!!room.jackpot_awarded;
-      const {data:existing}=await sb.from("mln133_players").select("*").eq("room_code",code).eq("name",name).maybeSingle();
-      if(existing){
-        state.playerId=existing.id;
-      }else{
-        await sb.from("mln133_players").insert({id:state.playerId,room_code:code,name,score:100,answered:false,bid:0,selected_answer:null});
-      }
-      await subscribeRoom();
-      await loadPlayers();
-      setStatus(true);
-    }catch(e){
-      console.error(e);toast("Không kết nối được phòng. Kiểm tra mã phòng/Supabase.","error");return;
-    }
-  }else{
-    // Demo mode: allows one browser to simulate the room.
-    state.players.push({id:state.playerId,name,score:100,answered:false,bid:0,selected_answer:null});
-    state.gameStatus="waiting";
-    setStatus(false);
-  }
-
-  $("copyLinkBtn").classList.remove("hidden");
-  renderPlayer();
-  showOnly(state.gameStatus==="playing" ? "playerGame" : "lobbyView");
-  renderAll();
+  const payload={roomCode:code,name};
+  const l=localPlayer();
+  if(l && l.roomCode===code){ payload.playerId=l.playerId; payload.playerToken=l.playerToken; }
+  sendMessage("join_room",payload);
 }
-
-async function submitPlayerBid(){
+function submitPlayerBid(){
+  const v=state.view; if(!v||!v.you) return;
   const input=$("playerBidInput");
-  const bid=Number(input.value);
-  const me=state.players.find(p=>p.id===state.playerId);
-  if(!me)return;
-  if(!state.auctionOpen){toast("Phiên đấu giá chưa mở.","error");return}
-  if(!Number.isFinite(bid)||bid<=0){toast("Nhập số điểm cược hợp lệ.","error");return}
-  if(bid>Number(me.score||0)){toast("Không thể cược vượt quá số điểm hiện có.","error");return}
-  me.bid=bid;
-  me.answered=true;
-  if(SUPABASE_READY){
-    await sb.from("mln133_players").update({bid,answered:true}).eq("id",me.id);
-  }
-  $("submitBidBtn").disabled=true;input.disabled=true;
-  $("playerAuctionStatus").textContent="ĐÃ GỬI CƯỢC";
-  $("playerAuctionBox").classList.add("hidden");
-  $("playerProcessing").classList.remove("hidden");
-  $("processingText").textContent="Đang chờ Admin chốt người thắng đấu giá...";
-  toast("Đã gửi mức cược. Đang xử lý...","success");
-  renderLeaderboards();
+  const raw=input.value.trim();
+  const bid=Number(raw);
+  if(!raw||!Number.isInteger(bid)||bid<=0){toast("Nhập số điểm cược hợp lệ (số nguyên lớn hơn 0).","error");return}
+  if(bid>v.you.score){toast(`Không thể cược vượt quá số điểm hiện có (${v.you.score}).`,"error");return}
+  if(sendMessage("player_bid",{bid})) $("submitBidBtn").disabled=true;
+}
+function selectPlayerAnswer(index){
+  const v=state.view; if(!v) return;
+  if(v.game.phase!=="question" || v.game.winningPlayerId!==state.playerId || v.you?.answered) return;
+  state.playerSelectedAnswer=index;
+  renderPlayer();
+}
+function submitPlayerAnswer(){
+  if(state.playerSelectedAnswer===null){toast("Hãy chọn một đáp án.","error");return}
+  if(sendMessage("player_answer",{answer:state.playerSelectedAnswer})) $("submitAnswerBtn").disabled=true;
+}
+function onPlayersUpdated(msg){
+  if(state.role!=="admin") return;
+  const labels={joined:"đã vào phòng",reconnected:"đã kết nối lại",disconnected:"mất kết nối",left:"đã rời phòng","timed out":"bị xoá do mất kết nối quá lâu"};
+  toast(`${msg.event==="joined"||msg.event==="reconnected"?"🟢":"🔴"} ${msg.name} ${labels[msg.event]||msg.event} (${msg.online}/${msg.total} online)`);
 }
 
 /* ================================================================
-   REALTIME
-   ================================================================
-*/
-async function subscribeRoom(){
-  if(!sb || !state.roomCode)return;
-  if(state.channel)sb.removeChannel(state.channel);
-
-  state.channel=sb.channel("mln133-room-"+state.roomCode)
-    .on("postgres_changes",{event:"*",schema:"public",table:"mln133_rooms",filter:"code=eq."+state.roomCode},payload=>{
-      const row=payload.new||{};
-      if(row.code!==state.roomCode)return;
-      state.currentQuestion=row.current_question||0;
-      state.gameStatus=row.status||"waiting";
-      state.auctionOpen=!!row.auction_open; state.auctionEnd=row.auction_end?new Date(row.auction_end).getTime():null;
-      state.winningPlayerId=row.winning_player_id||null; state.winningBid=row.winning_bid||0;
-      state.selectedAdminAnswer=row.selected_answer===null?null:row.selected_answer; state.resultPublished=!!row.result_published; state.questionOpen=!!row.question_open; state.answerEnd=row.answer_end?new Date(row.answer_end).getTime():null; state.jackpot=Number(row.jackpot||0); state.jackpotWinnerId=row.jackpot_winner_id||null; state.jackpotAwarded=!!row.jackpot_awarded;
-      renderAll();
-      if(state.auctionOpen && state.auctionEnd) startAuctionTimer();
-      routeByStatus();
-    })
-    .on("postgres_changes",{event:"*",schema:"public",table:"mln133_players",filter:"room_code=eq."+state.roomCode},async()=>{
-      await loadPlayers();renderAll();
-    })
-    .subscribe();
-  await loadPlayers();
-}
-async function loadPlayers(){
-  if(!sb || !state.roomCode)return;
-  const {data}=await sb.from("mln133_players").select("*").eq("room_code",state.roomCode).order("score",{ascending:false}).order("created_at",{ascending:true});
-  state.players=data||[];
-}
-async function updateRoom(patch){
-  if(SUPABASE_READY && state.roomCode){
-    await sb.from("mln133_rooms").update(patch).eq("code",state.roomCode);
+   ROOM STATE
+   ================================================================ */
+function applyRoomState(view){
+  if(!state.role || !view || view.roomCode!==state.roomCode) return;
+  state.view=view;
+  state.clockOffset=view.serverNow-Date.now();
+  if(view.roundId!==state.roundId){
+    state.roundId=view.roundId;
+    state.selectedAdminAnswer=null;
+    state.playerSelectedAnswer=null;
+    $("playerBidInput").value="";
   }
-}
-async function persistPlayers(){
-  if(SUPABASE_READY){
-    for(const p of state.players){
-      await sb.from("mln133_players").update({score:p.score,answered:p.answered,bid:p.bid||0,selected_answer:p.selected_answer??null}).eq("id",p.id);
-    }
-  }
+  if(view.game.status!=="ended") state.adminOnDashboard=false;
+  renderAll();
+  routeByStatus();
+  tick();
 }
 function routeByStatus(){
+  const g=state.view.game;
+  if(state.role==="admin"){
+    if(g.status==="ended" && !state.adminOnDashboard) showOnly("endView");
+    else showOnly("adminView");
+    return;
+  }
   if(state.role==="player"){
-    if(state.gameStatus==="playing")showOnly("playerGame");
-    else if(state.gameStatus==="ended"){showOnly("endView");renderFinalLeaderboard()}
+    if(g.status==="playing") showOnly("playerGame");
+    else if(g.status==="ended") showOnly("endView");
     else showOnly("lobbyView");
   }
 }
@@ -1075,116 +1023,186 @@ function routeByStatus(){
    RENDER
    ================================================================ */
 function renderAll(){
+  if(!state.view) return;
   if(state.role==="admin")renderAdmin();
   if(state.role==="player")renderPlayer();
   renderLeaderboards();
+  renderFinalLeaderboard();
+  $("endActionBtn").textContent=state.role==="admin"?"👑 Về bảng điều khiển":"🏠 Về trang chủ";
+}
+function adminPhaseLabel(g){
+  if(g.status==="ended") return "ĐÃ KẾT THÚC";
+  if(g.status!=="playing") return "CHỜ GAME";
+  if(g.result) return g.jackpotAwarded?"ĐÃ QUAY JACKPOT":"ĐÃ CHẤM";
+  if(g.answerOpen) return "ĐANG TRẢ LỜI";
+  if(g.winningPlayerId) return "ĐÃ CHỐT NGƯỜI THẮNG";
+  if(g.auctionOpen) return "ĐANG ĐẤU GIÁ";
+  return g.roundSkipped?"KHÔNG CÓ AI CƯỢC":"ĐẤU GIÁ";
 }
 function renderAdmin(){
-  $("adminRoomCode").textContent=state.roomCode||"------";
-  $("adminPlayerCount").textContent=state.players.length;
-  $("adminQuestionCount").textContent=QUESTIONS.length;
-  $("adminQuestionNo").textContent=state.gameStatus==="playing"?state.currentQuestion+1:0;
-  $("adminJackpot").textContent=Number(state.jackpot||0);
-  $("startGameBtn").disabled=state.gameStatus==="playing";
-  $("startGameBtn").textContent=state.gameStatus==="playing"?"🟢 Đang chơi":"▶ Bắt đầu game";
-  const q=QUESTIONS[state.currentQuestion];
-  const phase=state.gameStatus!=="playing"?"CHỜ GAME":state.resultPublished?((state.jackpotAwarded&&state.jackpotWinnerId)?"ĐÃ QUAY JACKPOT":"ĐÃ CHẤM"):state.questionOpen?"ĐANG TRẢ LỜI":state.winningPlayerId?"ĐÃ CHỐT NGƯỜI THẮNG":"ĐẤU GIÁ";
-  $("adminPhaseLabel").textContent=phase;
-  const winner=state.players.find(p=>p.id===state.winningPlayerId);
+  const v=state.view; if(!v) return;
+  const g=v.game, q=v.question;
+  const players=v.players;
+  const online=players.filter(p=>p.connected).length;
+  $("adminRoomCode").textContent=v.roomCode||"------";
+  $("adminPlayerCount").textContent=players.length;
+  $("adminQuestionCount").textContent=g.totalQuestions;
+  $("adminQuestionNo").textContent=g.status==="playing"?g.currentQuestion+1:0;
+  $("adminJackpot").textContent=g.jackpot;
+  $("startGameBtn").disabled=g.status!=="waiting";
+  $("startGameBtn").textContent=g.status==="playing"?"🟢 Đang chơi":g.status==="ended"?"🏁 Đã kết thúc":"▶ Bắt đầu game";
+  $("adminPhaseLabel").textContent=adminPhaseLabel(g);
+  const winner=players.find(p=>p.id===g.winningPlayerId);
   let stage=`<h3>Câu hỏi sẽ xuất hiện tại đây khi game bắt đầu.</h3><div class="small">Trong lúc đấu giá, Admin chỉ hiển thị tên câu; nội dung chỉ mở sau khi chốt người thắng.</div>`;
-  if(q && state.gameStatus==="playing"){
-    const showContent=state.questionOpen||state.resultPublished;
-    stage=`<h3>Câu ${q.id}</h3>`;
+  if(q && g.status==="playing"){
+    const showContent=g.answerOpen||!!g.result;
+    stage=`<h3>Câu ${q.number}/${g.totalQuestions} • ${escapeHtml(q.section)}</h3>`;
     if(showContent){
-      stage+=`<div style="font-size:20px;font-weight:900;line-height:1.4">${escapeHtml(q.text)}</div>`;
-      if(winner)stage+=`<div style="margin-top:10px" class="winner-pill">🏆 Quyền trả lời: ${escapeHtml(winner.name)} • Cược ${state.winningBid} điểm</div>`;
-      stage+=`<div class="admin-options">${q.options.map((o,i)=>`<button class="admin-option ${state.selectedAdminAnswer===i?"selected":""} ${state.resultPublished&&i===q.correct?"correct":""}" onclick="adminSelectAnswer(${i})"><b>${String.fromCharCode(65+i)}</b> • ${escapeHtml(o)}</button>`).join("")}</div>`;
-      if(winner && (winner.selected_answer!==null && winner.selected_answer!==undefined)) stage+=`<div class="winner-pill" style="margin-top:10px">📩 Đáp án người thắng đã gửi: ${String.fromCharCode(65+Number(winner.selected_answer))}</div>`;
-      if(state.resultPublished)stage+=`<div class="result-banner ${state.selectedAdminAnswer===q.correct?"ok":"bad"}" style="margin-top:12px">${state.selectedAdminAnswer===q.correct?`✅ Đúng – +${state.winningBid} điểm.`:`❌ Sai – -${state.winningBid} điểm và ${state.winningBid} điểm vào Jackpot.`}</div>`;
+      const canPick=g.phase==="question" && winner && !winner.answered;
+      const shown=g.result?g.result.answer:(winner&&winner.answered?winner.selectedAnswer:state.selectedAdminAnswer);
+      stage+=`<div style="font-size:20px;font-weight:900;line-height:1.4">${escapeHtml(q.question)}</div>`;
+      if(winner)stage+=`<div style="margin-top:10px" class="winner-pill">🏆 Quyền trả lời: ${escapeHtml(winner.name)} • Cược ${g.winningBid} điểm</div>`;
+      stage+=`<div class="admin-options">${q.options.map((o,i)=>`<button class="admin-option ${shown===i?"selected":""} ${g.result&&i===q.correct?"correct":""}" ${canPick?"":"disabled"} onclick="adminSelectAnswer(${i})"><b>${LETTERS[i]}</b> • ${escapeHtml(o)}</button>`).join("")}</div>`;
+      if(g.phase==="question"){
+        if(winner && winner.answered && winner.selectedAnswer!==null) stage+=`<div class="winner-pill" style="margin-top:10px">📩 Đáp án người thắng đã gửi: ${LETTERS[winner.selectedAnswer]}</div>`;
+        else stage+=`<div class="small" style="margin-top:10px">Đang chờ người thắng chọn đáp án. Nếu họ trả lời miệng, Admin có thể bấm chọn đáp án thay rồi bấm "Chấm đáp án".</div>`;
+      }
+      if(g.result){
+        const r=g.result;
+        stage+=`<div class="result-banner ${r.correct?"ok":"bad"}" style="margin-top:12px">${r.correct?`✅ Đúng – +${r.delta} điểm.`:`${r.timedOut?"⏰ Hết giờ":"❌ Sai"} – ${r.delta} điểm và ${-r.delta} điểm vào Jackpot.`}</div>`;
+        if(q.explanation) stage+=`<div class="small" style="margin-top:8px">💡 ${escapeHtml(q.explanation)}</div>`;
+      }
+      if(g.jackpotAwarded) stage+=`<div class="winner-pill" style="margin-top:10px">🎰 Jackpot: ${escapeHtml(g.jackpotWinnerName||"")} nhận +${g.jackpotAwardAmount} điểm</div>`;
+      else if(g.canSpinJackpot) stage+=`<div class="small" style="margin-top:10px">🎰 Đã hoàn thành mốc ${g.currentQuestion+1} câu – hãy quay Jackpot (${g.jackpot} điểm) trước khi sang câu tiếp.</div>`;
     }else{
-      stage+=`<div class="spin-card"><div style="font-size:44px">🔒</div><strong>NỘI DUNG CÂU HỎI ĐANG KHÓA</strong><div class="small" style="margin-top:6px">Chỉ hiển thị tên câu trong thời gian đấu giá.</div></div>`;
+      stage+=`<div class="spin-card"><div style="font-size:44px">🔒</div><strong>NỘI DUNG CÂU HỎI ĐANG KHÓA</strong><div class="small" style="margin-top:6px">${g.roundSkipped?"Không có ai cược. Có thể mở lại đấu giá hoặc sang câu tiếp.":winner?`🏆 ${escapeHtml(winner.name)} thắng với ${g.winningBid} điểm. Bấm "Mở câu hỏi" để bắt đầu 30 giây trả lời.`:"Chỉ hiển thị tên câu trong thời gian đấu giá."}</div></div>`;
     }
   }
   $("adminQuestionStage").innerHTML=stage;
-  $("openAuctionBtn").disabled=state.gameStatus!=="playing" || state.auctionOpen || !!state.winningPlayerId;
-  $("finalizeAuctionBtn").disabled=!state.auctionOpen;
-  $("openQuestionBtn").disabled=!state.winningPlayerId || state.questionOpen || state.resultPublished;
-  $("revealResultBtn").disabled=!state.winningPlayerId || !state.questionOpen || state.resultPublished;
-  $("spinJackpotBtn").disabled=!(state.resultPublished && ((state.currentQuestion+1)%10===0) && Number(state.jackpot||0)>0 && !state.jackpotAwarded);
-  $("nextQuestionBtn").disabled=state.gameStatus!=="playing" || (state.currentQuestion+1)%10===0 && !state.jackpotAwarded;
-  const status=state.auctionOpen?`ĐẤU GIÁ: ${Math.max(0,Math.ceil((state.auctionEnd-Date.now())/1000))}s`:state.questionOpen?`TRẢ LỜI: ${Math.max(0,Math.ceil((state.answerEnd-Date.now())/1000))}s`:state.winningPlayerId?"ĐÃ CHỐT":"CHƯA MỞ";
-  $("adminAuctionStatus").textContent=status;
-  $("adminBids").innerHTML=state.players.length?state.players.map(p=>`<div class="bid-card ${p.id===state.winningPlayerId?"winner":""}"><div class="bid-name">${escapeHtml(p.name)}</div><div class="bid-value">${Number(p.bid||0)} <span style="font-size:10px;color:var(--muted)">điểm</span></div><div class="bid-status">${p.id===state.winningPlayerId?"🏆 NGƯỜI THẮNG":p.answered?"Đã gửi":"Chưa gửi cược"}</div></div>`).join(""): `<div class="small">Chưa có người chơi.</div>`;
-  $("adminPlayers").innerHTML=state.players.length?state.players.map(p=>`<div class="player"><div class="avatar">${escapeHtml((p.name||"?").charAt(0).toUpperCase())}</div><div><strong>${escapeHtml(p.name)}</strong><small>${p.id===state.winningPlayerId?"🏆 Quyền trả lời":p.answered?"Đã tham gia đấu giá":"Chưa cược"} • ${p.score||0} điểm</small></div></div>`).join(""): `<div class="small">Chưa có người chơi.</div>`;
+  $("openAuctionBtn").disabled=!(g.status==="playing" && g.phase==="ready");
+  $("finalizeAuctionBtn").disabled=!g.auctionOpen;
+  $("openQuestionBtn").disabled=g.phase!=="winner";
+  $("revealResultBtn").disabled=g.phase!=="question";
+  $("spinJackpotBtn").disabled=!g.canSpinJackpot;
+  $("nextQuestionBtn").disabled=!g.canNextQuestion;
+  $("nextQuestionBtn").textContent=g.isLastQuestion?"🏁 Hoàn thành":"➡ Câu tiếp";
+  $("adminPlayersTitle").textContent=`👥 Người chơi: ${players.length}`;
+  $("adminOnlineLabel").textContent=`${online} ONLINE • REALTIME`;
+  $("adminBids").innerHTML=players.length?players.map(p=>`<div class="bid-card ${p.id===g.winningPlayerId?"winner":""}"><div class="bid-name">${p.connected?"🟢":"🔴"} ${escapeHtml(p.name)}</div><div class="bid-value">${Number(p.bid||0)} <span style="font-size:10px;color:var(--muted)">điểm</span></div><div class="bid-status">${p.id===g.winningPlayerId?"🏆 NGƯỜI THẮNG":p.hasBid?"Đã gửi":"Chưa gửi cược"}</div></div>`).join(""): `<div class="small">Chưa có người chơi.</div>`;
+  $("adminPlayers").innerHTML=players.length?players.map(p=>`<div class="player ${p.connected?"":"offline"}"><div class="avatar">${escapeHtml((p.name||"?").charAt(0).toUpperCase())}</div><div><strong>${escapeHtml(p.name)} ${p.connected?"🟢":"🔴"}</strong><small>${p.id===g.winningPlayerId?"🏆 Quyền trả lời":p.hasBid?"Đã tham gia đấu giá":"Chưa cược"} • ${p.score} điểm</small></div></div>`).join(""): `<div class="small">Chưa có người chơi. Gửi mã phòng hoặc link cho mọi người để tham gia.</div>`;
 }
 function renderPlayer(){
-  $("lobbyRoomCode").textContent=state.roomCode||"------";
-  $("lobbyCount").textContent=state.players.length;
-  $("lobbyPlayers").innerHTML=state.players.length?state.players.map(p=>`<div class="player"><div class="avatar">${escapeHtml((p.name||"?").charAt(0).toUpperCase())}</div><div><strong>${escapeHtml(p.name)}</strong><small>${p.id===state.playerId?"Bạn":"Người chơi"}</small></div></div>`).join(""): `<div class="small">Chưa có người chơi.</div>`;
-  $("playerRoomLabel").textContent="PHÒNG "+state.roomCode;
-  $("playerNameLabel").textContent=state.playerName||"";
-  const me=state.players.find(p=>p.id===state.playerId);
-  $("myScore").textContent=me?.score||0;
-  $("playerJackpot").textContent=Number(state.jackpot||0);
-  if(state.gameStatus!=="playing"){
+  const v=state.view; if(!v) return;
+  const g=v.game, me=v.you||{};
+  $("lobbyRoomCode").textContent=v.roomCode||"------";
+  $("lobbyCount").textContent=v.players.length;
+  $("lobbyPlayers").innerHTML=v.players.length?v.players.map(p=>`<div class="player ${p.connected?"":"offline"}"><div class="avatar">${escapeHtml((p.name||"?").charAt(0).toUpperCase())}</div><div><strong>${escapeHtml(p.name)}</strong><small>${p.id===state.playerId?"Bạn":"Người chơi"} • ${p.connected?"🟢 online":"🔴 offline"}</small></div></div>`).join(""): `<div class="small">Chưa có người chơi.</div>`;
+  $("playerRoomLabel").textContent="PHÒNG "+v.roomCode;
+  $("playerNameLabel").textContent=me.name||state.playerName||"";
+  $("myScore").textContent=me.score??0;
+  $("playerJackpot").textContent=g.jackpot;
+
+  const panels=["playerAuctionBox","playerProcessing","playerAnswerBox"];
+  const show=id=>panels.forEach(x=>$(x).classList.toggle("hidden",x!==id));
+  const setBidEnabled=on=>{ $("playerBidInput").disabled=!on; $("submitBidBtn").disabled=!on; };
+
+  if(g.status!=="playing"){
     $("playerQuestionNo").textContent="ĐANG CHỜ";
-    $("playerQuestionText").textContent=state.gameStatus==="ended"?"Game đã kết thúc.":"Admin chưa bắt đầu trò chơi.";
+    $("playerQuestionText").textContent=g.status==="ended"?"Game đã kết thúc.":"Admin chưa bắt đầu trò chơi.";
     $("playerQuestionSource").textContent="Hãy chờ quản trị viên.";
-    $("playerAuctionBox").classList.remove("hidden");$("playerProcessing").classList.add("hidden");$("playerAnswerBox").classList.add("hidden");
-    $("submitBidBtn").disabled=true;return;
-  }
-  const q=QUESTIONS[state.currentQuestion];if(!q)return;
-  $("playerQuestionNo").textContent=`CÂU ${state.currentQuestion+1} / ${QUESTIONS.length}`;
-  const isWinner=state.winningPlayerId===state.playerId;
-  const hasBid=Number(me?.bid||0)>0;
-  if(state.questionOpen && isWinner && !state.resultPublished){
-    $("playerQuestionText").textContent="📖 CÂU HỎI ĐÃ MỞ";
-    $("playerQuestionSource").textContent="Bạn có 30 giây để chọn đáp án.";
-    $("playerAuctionBox").classList.add("hidden");$("playerProcessing").classList.add("hidden");$("playerAnswerBox").classList.remove("hidden");
-    $("playerVisibleQuestion").innerHTML=`<div class="question-text">${escapeHtml(q.text)}</div><div class="question-source">${escapeHtml(q.section)}</div>`;
-    $("playerOptions").innerHTML=q.options.map((o,i)=>`<button class="player-option ${state.playerSelectedAnswer===i?"selected":""}" onclick="selectPlayerAnswer(${i})"><b>${String.fromCharCode(65+i)}</b> • ${escapeHtml(o)}</button>`).join("");
-    $("submitAnswerBtn").disabled=state.playerSelectedAnswer===null;
+    show("playerAuctionBox");
+    $("playerAuctionStatus").textContent="ĐANG CHỜ";
+    setBidEnabled(false);
     return;
   }
-  if(state.resultPublished){
-    $("playerAuctionBox").classList.add("hidden");$("playerAnswerBox").classList.add("hidden");$("playerProcessing").classList.remove("hidden");
-    $("processingText").textContent=isWinner?(state.selectedAdminAnswer===q.correct?`🎉 Chính xác! Bạn nhận +${state.winningBid} điểm.`:`❌ Sai! Bạn mất ${state.winningBid} điểm; số điểm này vào Jackpot.`):(state.jackpotWinnerId===state.playerId?`🎰 Bạn nhận Jackpot! +${state.jackpotAwardAmount||0} điểm.`:"Câu hỏi đã được xử lý. Hãy chờ câu tiếp theo.");
+  $("playerQuestionNo").textContent=`CÂU ${g.currentQuestion+1} / ${g.totalQuestions}`;
+  const isWinner=g.winningPlayerId===state.playerId;
+
+  if(g.phase==="question" && isWinner){
+    setBidEnabled(false);
+    if(!me.answered){
+      const q=v.question||{};
+      $("playerQuestionText").textContent="📖 CÂU HỎI ĐÃ MỞ";
+      $("playerQuestionSource").textContent="Bạn có 30 giây để chọn đáp án.";
+      show("playerAnswerBox");
+      $("playerVisibleQuestion").innerHTML=`<div class="question-text">${escapeHtml(q.question||"")}</div><div class="question-source">${escapeHtml(q.section||"")}</div>`;
+      $("playerOptions").innerHTML=(q.options||[]).map((o,i)=>`<button class="player-option ${state.playerSelectedAnswer===i?"selected":""}" onclick="selectPlayerAnswer(${i})"><b>${LETTERS[i]}</b> • ${escapeHtml(o)}</button>`).join("");
+      $("submitAnswerBtn").disabled=state.playerSelectedAnswer===null;
+    }else{
+      $("playerQuestionText").textContent="📩 ĐÃ GỬI ĐÁP ÁN";
+      $("playerQuestionSource").textContent="Kết quả sẽ được công bố khi Admin chấm hoặc hết giờ.";
+      show("playerProcessing");
+      $("processingText").textContent=`Đã gửi đáp án ${LETTERS[me.selectedAnswer]||""}. Đang chờ Admin chấm...`;
+    }
     return;
   }
+
+  if(g.phase==="result" && g.result){
+    const r=g.result;
+    setBidEnabled(false);
+    $("playerQuestionText").textContent="📊 CÂU HỎI ĐÃ ĐƯỢC CHẤM";
+    $("playerQuestionSource").textContent="Hãy chờ Admin chuyển sang câu tiếp theo.";
+    show("playerProcessing");
+    let html;
+    if(isWinner){
+      html=r.correct?`🎉 Chính xác! Bạn nhận +${r.delta} điểm.`:`${r.timedOut?"⏰ Hết giờ!":"❌ Sai!"} Bạn mất ${-r.delta} điểm; số điểm này vào Jackpot.`;
+    }else{
+      html=r.correct?`✅ ${escapeHtml(r.name)} trả lời đúng (+${r.delta} điểm).`:`❌ ${escapeHtml(r.name)} trả lời sai (${r.delta} điểm). Jackpot hiện có ${g.jackpot} điểm.`;
+    }
+    if(g.jackpotAwarded){
+      html+=g.jackpotWinnerId===state.playerId
+        ?`<br><b style="font-size:18px;color:var(--gold2)">🎰 JACKPOT! Bạn nhận +${g.jackpotAwardAmount} điểm!</b>`
+        :`<br>🎰 ${escapeHtml(g.jackpotWinnerName||"")} nhận Jackpot +${g.jackpotAwardAmount} điểm.`;
+    }else if(g.canSpinJackpot){
+      html+=`<br>🎰 Admin sắp quay Jackpot ${g.jackpot} điểm...`;
+    }
+    $("processingText").innerHTML=html;
+    return;
+  }
+
   $("playerQuestionText").textContent="🔒 CÂU HỎI ĐANG ĐƯỢC ADMIN XỬ LÝ";
   $("playerQuestionSource").textContent="Trong lúc đấu giá, bạn chỉ nhìn thấy số câu; nội dung chưa được mở.";
-  if(state.winningPlayerId){
-    $("playerAuctionBox").classList.add("hidden");$("playerAnswerBox").classList.add("hidden");$("playerProcessing").classList.remove("hidden");
-    $("processingText").textContent=isWinner?"🏆 Chúc mừng! Bạn thắng đấu giá. Admin sắp mở câu hỏi.":"Đang xử lý... Người thắng đang chờ Admin mở câu hỏi.";return;
+
+  if(g.phase==="winner" || g.phase==="question"){
+    setBidEnabled(false);
+    show("playerProcessing");
+    const name=escapeHtml(g.winningPlayerName||"Người thắng");
+    $("processingText").innerHTML=isWinner
+      ?"🏆 Chúc mừng! Bạn thắng đấu giá. Admin sắp mở câu hỏi."
+      :g.phase==="question"?`⏱️ ${name} đang trả lời câu hỏi...`:`Đang xử lý... ${name} thắng đấu giá (${g.winningBid} điểm), đang chờ Admin mở câu hỏi.`;
+    return;
   }
-  if(state.auctionOpen && !hasBid){
-    $("playerAuctionBox").classList.remove("hidden");$("playerProcessing").classList.add("hidden");$("playerAnswerBox").classList.add("hidden");
-    $("playerAuctionStatus").textContent=`ĐANG MỞ • ${Math.max(0,Math.ceil((state.auctionEnd-Date.now())/1000))}s`;
-    $("submitBidBtn").disabled=false;
-  }else{
-    $("playerAuctionBox").classList.add("hidden");$("playerAnswerBox").classList.add("hidden");$("playerProcessing").classList.remove("hidden");
-    $("processingText").textContent=hasBid?"Đã gửi mức đấu giá. Đang chờ Admin chốt...":"Đang chờ Admin mở phiên đấu giá...";
+
+  if(g.phase==="auction" && g.auctionOpen && !me.hasBid){
+    show("playerAuctionBox");
+    const canBid=(me.score||0)>0;
+    setBidEnabled(canBid);
+    $("playerBidInput").max=me.score||0;
+    if(!canBid) $("playerAuctionStatus").textContent="HẾT ĐIỂM";
+    return;
   }
+
+  setBidEnabled(false);
+  show("playerProcessing");
+  $("processingText").textContent=me.hasBid
+    ?`Đã gửi mức cược ${me.bid} điểm. Đang chờ Admin chốt người thắng đấu giá...`
+    :g.roundSkipped?"Không có ai cược ở câu này. Đang chờ Admin...":"Đang chờ Admin mở phiên đấu giá...";
 }
-function selectPlayerAnswer(index){
-  if(!state.questionOpen || state.winningPlayerId!==state.playerId)return;
-  state.playerSelectedAnswer=index;
-  renderPlayer();
+function sortedPlayers(){
+  return [...(state.view?.players||[])].sort((a,b)=>(b.score||0)-(a.score||0));
 }
-function renderAnswers(q){ /* Người chơi không được xem đáp án. */ }
-function selectAnswer(el){ /* Không dùng ở role người chơi. */ }
 function renderLeaderboards(){
-  const sorted=[...state.players].sort((a,b)=>(b.score||0)-(a.score||0));
+  const sorted=sortedPlayers();
   const html=sorted.length?sorted.map((p,i)=>`
     <div class="rank-row">
-      <div class="rank-left"><div class="rank-num">${i+1}</div><div class="rank-name">${escapeHtml(p.name)}</div></div>
+      <div class="rank-left"><div class="rank-num">${i+1}</div><div class="rank-name">${escapeHtml(p.name)}${p.id===state.playerId?" (bạn)":""}</div></div>
       <div class="rank-score">${p.score||0}</div>
     </div>`).join(""):`<div class="small">Chưa có dữ liệu.</div>`;
   $("adminLeaderboard").innerHTML=html;
   $("playerLeaderboard").innerHTML=html;
 }
 function renderFinalLeaderboard(){
-  const sorted=[...state.players].sort((a,b)=>(b.score||0)-(a.score||0));
+  const sorted=sortedPlayers();
   $("finalLeaderboard").innerHTML=sorted.length?sorted.map((p,i)=>`
     <div class="rank-row" style="${i===0?'border-color:rgba(245,158,11,.5);':''}">
       <div class="rank-left"><div class="rank-num">${i===0?"🥇":i===1?"🥈":i===2?"🥉":i+1}</div><div class="rank-name">${escapeHtml(p.name)}</div></div>
@@ -1192,123 +1210,81 @@ function renderFinalLeaderboard(){
     </div>`).join(""):`<div class="small">Không có người chơi.</div>`;
 }
 function openQuestionList(){
+  sendMessage("admin_get_questions");
+}
+function renderQuestionList(questions){
+  if(state.role!=="admin") return;
   $("adminQuestionsCard").classList.remove("hidden");
-  $("questionListCount").textContent=QUESTIONS.length+" CÂU";
-  $("adminQuestions").innerHTML=QUESTIONS.map(q=>`
+  $("questionListCount").textContent=questions.length+" CÂU";
+  $("adminQuestions").innerHTML=questions.map(q=>`
     <div class="question-admin">
-      <strong>Câu ${q.id}. ${escapeHtml(q.text)}</strong>
-      <p>${escapeHtml(q.section)} • Đáp án: ${String.fromCharCode(65+q.correct)}</p>
+      <strong>Câu ${q.id}. ${escapeHtml(q.question)}</strong>
+      <p>${escapeHtml(q.section)} • Đáp án: ${LETTERS[q.correct]}</p>
     </div>`).join("");
-  $("modalQuestions").innerHTML=QUESTIONS.map(q=>`
-    <div class="question-admin"><strong>Câu ${q.id}. ${escapeHtml(q.text)}</strong><p>Đáp án đúng: ${String.fromCharCode(65+q.correct)}</p></div>
+  $("modalQuestions").innerHTML=questions.map(q=>`
+    <div class="question-admin"><strong>Câu ${q.id}. ${escapeHtml(q.question)}</strong><p>Đáp án đúng: ${LETTERS[q.correct]} – ${escapeHtml(q.options[q.correct]||"")}</p></div>
   `).join("");
   $("questionModal").classList.remove("hidden");
 }
 function closeQuestionList(){$("questionModal").classList.add("hidden")}
 
 /* ================================================================
-   TIMER
+   COUNTDOWN (chỉ hiển thị – server quyết định hết giờ)
    ================================================================ */
-function startTimer(seconds){ /* Timer đấu giá được điều khiển bởi startAuctionTimer(). */ }
+function tick(){
+  const v=state.view; if(!v) return;
+  const g=v.game;
+  const auctionLeft=g.auctionOpen?secondsLeft(g.auctionEndAt):null;
+  const answerLeft=g.answerOpen?secondsLeft(g.answerEndAt):null;
+  if(state.role==="admin"){
+    $("adminAuctionStatus").textContent=g.auctionOpen?`ĐẤU GIÁ: ${auctionLeft}s`:g.answerOpen?`TRẢ LỜI: ${answerLeft}s`:g.winningPlayerId?"ĐÃ CHỐT":"CHƯA MỞ";
+  }
+  if(state.role==="player"){
+    const left=auctionLeft!==null?auctionLeft:answerLeft;
+    const t=$("playerTimer");
+    t.textContent=left===null?"--":left;
+    t.classList.toggle("urgent",left!==null&&left<=5);
+    if(g.auctionOpen && !v.you?.hasBid && (v.you?.score||0)>0) $("playerAuctionStatus").textContent=`ĐANG MỞ • ${auctionLeft}s`;
+    $("playerAnswerTimer").textContent=answerLeft===null?"--":`${answerLeft}s`;
+  }
+}
+setInterval(tick,250);
 
 /* ================================================================
    LINK
    ================================================================ */
-function copyRoomLink(){
+async function copyText(text){
+  try{
+    if(navigator.clipboard && window.isSecureContext){ await navigator.clipboard.writeText(text); return true; }
+  }catch{}
+  const ta=document.createElement("textarea");
+  ta.value=text; ta.style.position="fixed"; ta.style.opacity="0";
+  document.body.appendChild(ta); ta.select();
+  let ok=false;
+  try{ ok=document.execCommand("copy"); }catch{}
+  ta.remove();
+  return ok;
+}
+async function copyRoomLink(){
   if(!state.roomCode){toast("Chưa có phòng.","error");return}
-  const url=new URL(location.href);
+  const url=new URL(location.origin+location.pathname);
   url.searchParams.set("room",state.roomCode);
-  navigator.clipboard?.writeText(url.toString());
-  toast("Đã copy link phòng: "+url.toString(),"success");
+  const ok=await copyText(url.toString());
+  toast((ok?"Đã copy link phòng: ":"Link phòng: ")+url.toString(),ok?"success":"");
 }
 function autoJoinFromUrl(){
-  const room=new URLSearchParams(location.search).get("room");
-  if(room){
-    showPlayerJoin();
-    $("roomCodeInput").value=room.toUpperCase();
-  }
+  if(urlRoom()) showPlayerJoin();
 }
 
 /* ================================================================
    STARTUP
    ================================================================ */
 (function init(){
-  setStatus(SUPABASE_READY);
+  setStatus("connecting");
   autoJoinFromUrl();
   renderLeaderboards();
+  connectWebSocket();
 })();
-
-/* ================================================================
-   SQL SETUP CHO SUPABASE
-   Chạy đoạn này trong SQL Editor của Supabase:
-
-   create table if not exists public.mln133_rooms (
-     code text primary key,
-     status text not null default 'waiting',
-     current_question int not null default 0,
-     question_count int not null default 10,
-     phase text not null default 'waiting',
-     question_open boolean not null default false,
-     answer_end timestamptz,
-     jackpot int not null default 0,
-     jackpot_winner_id uuid,
-     jackpot_awarded boolean not null default false,
-     auction_open boolean not null default false,
-     auction_end timestamptz,
-     winning_player_id uuid,
-     winning_bid int not null default 0,
-     selected_answer int,
-     result_published boolean not null default false,
-     created_at timestamptz not null default now()
-   );
-
-   create table if not exists public.mln133_players (
-     id uuid primary key,
-     room_code text not null references public.mln133_rooms(code) on delete cascade,
-     name text not null,
-     score int not null default 100,
-     bid int not null default 0,
-     answered boolean not null default false,
-     selected_answer int,
-     created_at timestamptz not null default now()
-   );
-
-   -- Nếu bạn đã chạy SQL cũ, chạy thêm:
-   alter table public.mln133_rooms add column if not exists phase text not null default 'waiting';
-   alter table public.mln133_rooms add column if not exists question_open boolean not null default false;
-   alter table public.mln133_rooms add column if not exists answer_end timestamptz;
-   alter table public.mln133_rooms add column if not exists jackpot int not null default 0;
-   alter table public.mln133_rooms add column if not exists jackpot_winner_id uuid;
-   alter table public.mln133_rooms add column if not exists jackpot_awarded boolean not null default false;
-   alter table public.mln133_rooms add column if not exists auction_open boolean not null default false;
-   alter table public.mln133_rooms add column if not exists auction_end timestamptz;
-   alter table public.mln133_rooms add column if not exists winning_player_id uuid;
-   alter table public.mln133_rooms add column if not exists winning_bid int not null default 0;
-   alter table public.mln133_rooms add column if not exists selected_answer int;
-   alter table public.mln133_rooms add column if not exists result_published boolean not null default false;
-   alter table public.mln133_players add column if not exists bid int not null default 0;
-   alter table public.mln133_players add column if not exists selected_answer int;
-
-   alter table public.mln133_rooms enable row level security;
-   alter table public.mln133_players enable row level security;
-
-   drop policy if exists "mln133 rooms public read" on public.mln133_rooms;
-   drop policy if exists "mln133 rooms public insert" on public.mln133_rooms;
-   drop policy if exists "mln133 rooms public update" on public.mln133_rooms;
-   drop policy if exists "mln133 players public read" on public.mln133_players;
-   drop policy if exists "mln133 players public insert" on public.mln133_players;
-   drop policy if exists "mln133 players public update" on public.mln133_players;
-
-   create policy "mln133 rooms public read" on public.mln133_rooms for select to anon using (true);
-   create policy "mln133 rooms public insert" on public.mln133_rooms for insert to anon with check (true);
-   create policy "mln133 rooms public update" on public.mln133_rooms for update to anon using (true) with check (true);
-   create policy "mln133 players public read" on public.mln133_players for select to anon using (true);
-   create policy "mln133 players public insert" on public.mln133_players for insert to anon with check (true);
-   create policy "mln133 players public update" on public.mln133_players for update to anon using (true) with check (true);
-
-   alter publication supabase_realtime add table public.mln133_rooms;
-   alter publication supabase_realtime add table public.mln133_players;
-   ================================================================ */
 </script>
 </body>
 </html>

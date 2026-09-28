@@ -1,0 +1,18 @@
+{
+  "name": "game-mln133",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Quiz đấu giá realtime Chương 6 MLN133 – Node.js + WebSocket (ws)",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node --watch server/server.js",
+    "test": "node scripts/smoke-test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
